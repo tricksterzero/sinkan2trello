@@ -1,6 +1,9 @@
 import readline from 'readline/promises';
 import { stdin as input, stdout as output } from 'process';
 import fs from 'fs';
+import { createTrelloClient } from './lib/trello.js';
+import { fetchWithRetry } from './lib/net.js';
+import { print, printSection, printError, printSuccess } from './lib/log.js';
 
 const CONFIG_PATH = './config.js';
 const BACKUP_PATH = './config.js.bak';
@@ -13,63 +16,15 @@ const rl = readline.createInterface({ input, output });
 
 const ask = (question) => rl.question(question);
 
-const print = (msg = '') => console.log(msg);
-const printSection = (title) => {
-  print();
-  print(`── ${title} ${'─'.repeat(Math.max(0, 50 - title.length))}`);
+// 進捗行をクリアする（接続確認の上書き表示用）
+const clearLine = () => {
+  process.stdout.clearLine(0);
+  process.stdout.cursorTo(0);
 };
-const printError   = (msg) => console.error(`  ✗ ${msg}`);
-const printSuccess = (msg) => console.log(`  ✓ ${msg}`);
-
-// =============================================================================
-// Trello API
-// =============================================================================
-
-const trelloGet = async (path, params, apiKey, apiToken) => {
-  const query = new URLSearchParams({ key: apiKey, token: apiToken, ...params });
-  const url = `https://api.trello.com/1${path}?${query}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-};
-
-const verifyTrelloCredentials = async (apiKey, apiToken) => {
-  const data = await trelloGet('/members/me', {}, apiKey, apiToken);
-  return data.fullName ?? data.username;
-};
-
-const fetchBoards = (apiKey, apiToken) =>
-  trelloGet('/members/me/boards', { fields: 'name,closed' }, apiKey, apiToken);
-
-const fetchLists = (boardId, apiKey, apiToken) =>
-  trelloGet(`/boards/${boardId}/lists`, { fields: 'name,closed' }, apiKey, apiToken);
 
 // =============================================================================
 // 対話ステップ
 // =============================================================================
-
-const fetchWithTimeout = (url, options, timeoutMs) => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal })
-    .finally(() => clearTimeout(timer));
-};
-
-const verifySinkanUrl = async (url, { retries = 3, timeoutMs = 15000 } = {}) => {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const res = await fetchWithTimeout(url, { method: 'HEAD' }, timeoutMs);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      return;
-    } catch (err) {
-      const isLast = attempt === retries;
-      if (isLast) throw err;
-      process.stdout.clearLine(0);
-      process.stdout.cursorTo(0);
-      process.stdout.write('  iCal URLに接続確認中... タイムアウト、リトライ中... ' + attempt + '回目');
-    }
-  }
-};
 
 const stepSinkanUrl = async () => {
   printSection('新刊.net iCal URL');
@@ -84,14 +39,20 @@ const stepSinkanUrl = async () => {
     }
     process.stdout.write('  iCal URLに接続確認中...');
     try {
-      await verifySinkanUrl(url);
-      process.stdout.clearLine(0);
-      process.stdout.cursorTo(0);
+      await fetchWithRetry(url, {
+        options: { method: 'HEAD' },
+        timeout: 15000,
+        retries: 3,
+        onRetry: ({ attempt }) => {
+          clearLine();
+          process.stdout.write('  iCal URLに接続確認中... リトライ中... ' + attempt + '回目');
+        },
+      });
+      clearLine();
       printSuccess('接続成功。');
       return url;
     } catch (err) {
-      process.stdout.clearLine(0);
-      process.stdout.cursorTo(0);
+      clearLine();
       printError('接続に失敗しました（' + err.message + '）。URLを確認して再入力してください。');
     }
   }
@@ -108,24 +69,23 @@ const stepTrelloCredentials = async () => {
 
     process.stdout.write('  Trello APIに接続確認中...');
     try {
-      const userName = await verifyTrelloCredentials(apiKey, apiToken);
-      process.stdout.clearLine(0);
-      process.stdout.cursorTo(0);
-      printSuccess(`接続成功 — ${userName} としてログインしています。`);
+      const trello = createTrelloClient(apiKey, apiToken);
+      const me = await trello.getMe();
+      clearLine();
+      printSuccess(`接続成功 — ${me.fullName ?? me.username} としてログインしています。`);
       return { apiKey, apiToken };
     } catch {
-      process.stdout.clearLine(0);
-      process.stdout.cursorTo(0);
+      clearLine();
       printError('接続に失敗しました。APIキーとトークンを確認して再入力してください。');
       print();
     }
   }
 };
 
-const stepBoardId = async (apiKey, apiToken) => {
+const stepBoardId = async (trello) => {
   printSection('Trello ボードの選択');
 
-  const boards = (await fetchBoards(apiKey, apiToken)).filter((b) => !b.closed);
+  const boards = (await trello.getBoards()).filter((b) => !b.closed);
   boards.forEach((b, i) => print(`  [${i + 1}] ${b.name}`));
   print();
 
@@ -140,13 +100,13 @@ const stepBoardId = async (apiKey, apiToken) => {
   }
 };
 
-const stepListIds = async (boardId, apiKey, apiToken) => {
+const stepListIds = async (trello, boardId) => {
   printSection('Trello リストの選択');
   print('使用するリストをカンマ区切りの番号で入力してください。');
   print('例: 1,3,5');
   print();
 
-  const lists = (await fetchLists(boardId, apiKey, apiToken)).filter((l) => !l.closed);
+  const lists = (await trello.getLists(boardId)).filter((l) => !l.closed);
   lists.forEach((l, i) => print(`  [${i + 1}] ${l.name}`));
   print();
 
@@ -215,6 +175,7 @@ const generateConfig = ({ sinkanIcalUrl, apiKey, apiToken, boardId, listIds }) =
   ];
   return lines.join('\n');
 };
+
 const saveConfig = (content) => {
   if (fs.existsSync(CONFIG_PATH)) {
     fs.copyFileSync(CONFIG_PATH, BACKUP_PATH);
@@ -239,8 +200,9 @@ const main = async () => {
   try {
     const sinkanIcalUrl        = await stepSinkanUrl();
     const { apiKey, apiToken } = await stepTrelloCredentials();
-    const boardId              = await stepBoardId(apiKey, apiToken);
-    const listIds              = await stepListIds(boardId, apiKey, apiToken);
+    const trello               = createTrelloClient(apiKey, apiToken);
+    const boardId              = await stepBoardId(trello);
+    const listIds              = await stepListIds(trello, boardId);
     await stepCardNameExample();
 
     printSection('config.js を生成');
@@ -249,7 +211,7 @@ const main = async () => {
 
     print();
     print('セットアップが完了しました。');
-    print('次のステップ: node main.js を実行してください。');
+    print('次のステップ: node index.js を実行してください。');
     print();
   } catch (err) {
     print();

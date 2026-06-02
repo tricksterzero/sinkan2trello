@@ -1,4 +1,9 @@
-import { SINKAN_ICAL_URL, TRELLO_API_KEY, TRELLO_API_TOKEN, TRELLO_BOARD_ID, TRELLO_LIST_ID, createTrelloCardName } from './config.js';
+import { SINKAN_ICAL_URL, TRELLO_API_KEY, TRELLO_API_TOKEN, TRELLO_LIST_ID, createTrelloCardName } from './config.js';
+import { createTrelloClient } from './lib/trello.js';
+import { fetchWithRetry, sleep } from './lib/net.js';
+import { print, printError, printSuccess, printVerbose, printProgress, printProgressDone } from './lib/log.js';
+
+const trello = createTrelloClient(TRELLO_API_KEY, TRELLO_API_TOKEN);
 
 // =============================================================================
 // メイン関数
@@ -80,23 +85,8 @@ const main = async () => {
 };
 
 // =============================================================================
-// 出力
+// 出力（このスクリプト固有の整形出力）
 // =============================================================================
-const print        = (msg = '') => console.log(msg);
-const printError   = (msg)      => console.error(`  ✗ ${msg}`);
-const printSuccess = (msg)      => console.log(`  ✓ ${msg}`);
-const printVerbose = (msg)      => console.log(`  ◆ ${msg}`);
-
-const printProgress = (msg) => {
-  process.stdout.write(`  … ${msg}`);
-};
-
-const printProgressDone = (msg) => {
-  process.stdout.clearLine(0);
-  process.stdout.cursorTo(0);
-  printSuccess(msg);
-};
-
 const printAdded = ({ releaseDateStr, bookTitle, authorName, publisherName }) => {
   print(`  ┌ 追加: ${bookTitle}`);
   print(`  │ 発売日: ${releaseDateStr}  作者: ${authorName || '不明'}  出版社: ${publisherName || '不明'}`);
@@ -131,67 +121,41 @@ const startOfDay = (date) =>
 const fetchAllTrelloCards = async (verboseMode = false) => {
   if(verboseMode) printVerbose(`取得対象リスト数: ${TRELLO_LIST_ID.length} 件 (IDs: ${TRELLO_LIST_ID.join(', ')})`);
   const results = await Promise.all(
-    TRELLO_LIST_ID.map((listId) => fetchTrelloCards(listId, verboseMode))
+    TRELLO_LIST_ID.map(async (listId) => {
+      if(verboseMode) printVerbose(`リスト取得中: ${listId}`);
+      const cards = await trello.getCards(listId);
+      if(verboseMode) printVerbose(`  → ${listId}: ${cards.length} 件`);
+      return cards;
+    })
   );
   return results.flat();
-};
-
-const fetchTrelloCards = async (listId, verboseMode = false) => {
-  if(verboseMode) printVerbose(`リスト取得中: ${listId}`);
-  const res = await fetch(`https://api.trello.com/1/lists/${listId}/cards?key=${TRELLO_API_KEY}&token=${TRELLO_API_TOKEN}&fields=name`);
-  if(!res.ok) throw new Error(`Trello API error: ${res.status}`);
-  const cards = await res.json();
-  if(verboseMode) printVerbose(`  → ${listId}: ${cards.length} 件`);
-  return cards;
 };
 
 const isDuplicateCard = (cards, cardName) =>
   cards.some((card) => card.name === cardName);
 
-const addTrelloCard = async (cardName, sinkanUrl) => {
-  const res = await fetch(`https://api.trello.com/1/cards?key=${TRELLO_API_KEY}&token=${TRELLO_API_TOKEN}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: cardName,
-      urlSource: sinkanUrl,
-      pos: 'top',
-      idList: TRELLO_LIST_ID[0],
-    }),
+const addTrelloCard = (cardName, sinkanUrl) =>
+  trello.addCard({
+    name: cardName,
+    urlSource: sinkanUrl,
+    pos: 'top',
+    idList: TRELLO_LIST_ID[0],
   });
-  if(!res.ok) throw new Error(`Trello API error: ${res.status}`);
-  return res.json(); // card オブジェクトを返すように変更
-};
 
 // =============================================================================
 // iCal
 // =============================================================================
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const fetchIcsWithRetry = async (url, { timeout = 30 * 1000, retries = 3, retryDelay = 1000 } = {}) => {
-  for(let attempt = 1; attempt <= retries; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    try {
-      const res = await fetch(url, { signal: controller.signal });
-      if(!res.ok) throw new Error(`HTTP error: ${res.status}`);
-      return await res.text();
-    } catch (error) {
-      clearTimeout(timer);
-      const isTimeout = error.name === 'AbortError' || controller.signal.aborted;
-      const isLast = attempt === retries;
-      if(isLast) throw new Error(isTimeout ? 'タイムアウトしました' : `取得失敗: ${error.message}`);
+const fetchAndParseIcs = async (url) => {
+  const res = await fetchWithRetry(url, {
+    timeout: 30 * 1000,
+    retries: 3,
+    retryDelay: 1000,
+    onRetry: ({ attempt, retries, isTimeout, error }) => {
       const reason = isTimeout ? 'タイムアウト' : error.message;
       process.stdout.write(`\r  … 新刊.netに接続中... ${reason}、リトライ中 (${attempt}/${retries - 1}回目)`);
-      await sleep(retryDelay);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-};
-
-const fetchAndParseIcs = async (url) => {
-  const text = await fetchIcsWithRetry(url);
+    },
+  });
+  const text = await res.text();
   return parseIcs(text);
 };
 
