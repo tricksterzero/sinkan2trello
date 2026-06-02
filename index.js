@@ -230,6 +230,11 @@ const decodeHtmlEntities = (value) =>
     return HTML_NAMED_ENTITIES[body.toLowerCase()] ?? whole; // 未知の実体はそのまま残す
   });
 
+// 端末制御文字（ESC/BEL 等の C0制御・DEL・C1制御）を除去する。非信頼な iCal 由来テキストを
+// ターミナルやカード名に出す前に通し、ANSIエスケープ等による出力偽装・端末操作を防ぐ。
+// decodeHtmlEntities は &#27; 等で制御文字を生成し得るので、デコード後の最終値に適用すること。
+const stripControlChars = (value) => value.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+
 const parseVEvent = (block) => {
   const get = (key) => {
     const match = block.match(new RegExp(`^${key}[;:][^\r\n]*`, 'm'));
@@ -238,8 +243,8 @@ const parseVEvent = (block) => {
   };
 
   const dtstart     = get('DTSTART'); // DATE 値なので TEXT エスケープ対象外
-  const summary     = unescapeIcsText(get('SUMMARY'));
-  const description = unescapeIcsText(get('DESCRIPTION'));
+  const summary     = stripControlChars(unescapeIcsText(get('SUMMARY')));
+  const description = unescapeIcsText(get('DESCRIPTION')); // パース専用（直接表示しない）
 
   // DTSTART から発売日(YYYY-MM-DD)を取り出す。終日形式(20260302)が基本だが、
   // 日時形式(20260302T000000Z 等)でも先頭の YYYYMMDD を採用する（時刻部は無視）。
@@ -247,7 +252,7 @@ const parseVEvent = (block) => {
   const dateMatch = dtstart.match(/^(\d{4})(\d{2})(\d{2})/);
   if(!dateMatch || !summary) return null;
   const releaseDateStr = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
-  const sinkanUrl      = decodeHtmlEntities(description.match(/href=["'](.*?)["']/)?.[1] ?? '');
+  const sinkanUrl      = stripControlChars(decodeHtmlEntities(description.match(/href=["'](.*?)["']/)?.[1] ?? ''));
 
   // DESCRIPTION は <a href="URL">発売日<br />タイトル<br />作者<br />出版社<br /></a> の形。
   // ただし雑誌など作者がいないデータは「作者」の <br /> 行ごと省略され、
@@ -262,8 +267,8 @@ const parseVEvent = (block) => {
     .map((s) => s.trim())
     .filter(Boolean);
   const rest          = fields.slice(2); // [発売日, タイトル] を除いた残り
-  const publisherName = decodeHtmlEntities(rest.length >= 1 ? rest[rest.length - 1] : '');
-  const authorName    = decodeHtmlEntities(rest.length >= 2 ? rest[0] : '');
+  const publisherName = stripControlChars(decodeHtmlEntities(rest.length >= 1 ? rest[rest.length - 1] : ''));
+  const authorName    = stripControlChars(decodeHtmlEntities(rest.length >= 2 ? rest[0] : ''));
 
   return { releaseDateStr, bookTitle: summary, sinkanUrl, authorName, publisherName };
 };
