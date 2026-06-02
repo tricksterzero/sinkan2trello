@@ -140,7 +140,10 @@ const stepCardNameExample = async () => {
 // =============================================================================
 
 const generateConfig = ({ sinkanIcalUrl, apiKey, apiToken, boardId, listIds }) => {
-  const listIdsStr = listIds.map((id) => `'${id}'`).join(', ');
+  // 入力値は JSON.stringify で正しい JS 文字列リテラルにする。' \ 改行 ${ } などが
+  // 含まれても config.js が壊れたり、コード片が混入したりしないようにするため
+  // （config.js は import で実行されるので、生成内容の健全性は重要）。
+  const listIdsStr = listIds.map((id) => JSON.stringify(id)).join(', ');
   const lines = [
     `// =============================================================================`,
     `// Sinkan2Trello 設定ファイル`,
@@ -151,14 +154,14 @@ const generateConfig = ({ sinkanIcalUrl, apiKey, apiToken, boardId, listIds }) =
     '',
     '',
     `// 新刊.netのiCal形式カレンダーへのURL`,
-    `export const SINKAN_ICAL_URL = '${sinkanIcalUrl}';`,
+    `export const SINKAN_ICAL_URL = ${JSON.stringify(sinkanIcalUrl)};`,
     '',
     `// TrelloのAPIキーとトークン`,
-    `export const TRELLO_API_KEY   = '${apiKey}';`,
-    `export const TRELLO_API_TOKEN = '${apiToken}';`,
+    `export const TRELLO_API_KEY   = ${JSON.stringify(apiKey)};`,
+    `export const TRELLO_API_TOKEN = ${JSON.stringify(apiToken)};`,
     '',
     `// Trelloの書き込み先`,
-    `export const TRELLO_BOARD_ID = '${boardId}';`,
+    `export const TRELLO_BOARD_ID = ${JSON.stringify(boardId)};`,
     `export const TRELLO_LIST_ID  = [${listIdsStr}];`,
     '',
     `// Trelloに登録するカード名を定義して文字列として返す関数。info.jsを実行すると生成例が表示される`,
