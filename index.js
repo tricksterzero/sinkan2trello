@@ -99,6 +99,16 @@ const main = async () => {
         printVerbose(`理由: ${error.cause?.message ?? error.message}`);
         printVerbose(`スタックトレース:\n${(error.cause ?? error).stack}`);
       }
+    } else if(error.kind === 'trello-fetch') {
+      printError('Trelloのカード一覧を取得できませんでした。');
+      print(error.message); // 失敗したリストIDと理由（fetchAllTrelloCards で組み立て済み）
+      print('    リストIDの設定誤り・権限、または Trello の一時的な不調が考えられます。');
+      print('    重複判定の精度を保つため、1リストでも取得失敗した場合は安全のため中断します。');
+      if(verboseMode) {
+        for(const { listId, result } of error.failed ?? []) {
+          printVerbose(`スタックトレース[${listId}]:\n${result.reason?.stack ?? result.reason}`);
+        }
+      }
     } else {
       printError(`致命的なエラーが発生しました: ${error.message}`);
       if(verboseMode) printVerbose(`スタックトレース:\n${error.stack}`);
@@ -162,7 +172,10 @@ const formatLocalDate = (date) => {
 // =============================================================================
 const fetchAllTrelloCards = async (verboseMode = false) => {
   if(verboseMode) printVerbose(`取得対象リスト数: ${TRELLO_LIST_ID.length} 件 (IDs: ${TRELLO_LIST_ID.join(', ')})`);
-  const results = await Promise.all(
+  // allSettled で全リストの結果を取り切ってから判定する。1リストでも欠けると
+  // 重複判定の母集合が崩れ再追加（重複登録）を招くため、失敗があれば全停止する。
+  // Promise.all と違い「どのリストが落ちたか」を名指しできるのが狙い。
+  const settled = await Promise.allSettled(
     TRELLO_LIST_ID.map(async (listId) => {
       if(verboseMode) printVerbose(`リスト取得中: ${listId}`);
       const cards = await trello.getCards(listId);
@@ -170,7 +183,24 @@ const fetchAllTrelloCards = async (verboseMode = false) => {
       return cards;
     })
   );
-  return results.flat();
+
+  const failed = TRELLO_LIST_ID
+    .map((listId, i) => ({ listId, result: settled[i] }))
+    .filter(({ result }) => result.status === 'rejected');
+
+  if(failed.length > 0) {
+    const detail = failed
+      .map(({ listId, result }) => `    - ${listId}: ${result.reason?.message ?? result.reason}`)
+      .join('\n');
+    const err = new Error(
+      `Trelloのカード取得に失敗したリストがあります（${failed.length}/${TRELLO_LIST_ID.length} 件）:\n${detail}`
+    );
+    err.kind = 'trello-fetch';
+    err.failed = failed;
+    throw err;
+  }
+
+  return settled.flatMap((r) => r.value);
 };
 
 const isDuplicateCard = (cards, cardName) =>
