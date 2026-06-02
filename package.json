@@ -4,7 +4,6 @@
   "description": "新刊.netの新刊発売情報(iCal)をTrelloカードに自動登録する個人用ツール",
   "type": "module",
   "main": "index.js",
-  "private": true,
   "engines": {
     "node": ">=18"
   },
@@ -14,5 +13,5 @@
     "info": "node info.js"
   },
   "author": "tsZ",
-  "license": "ISC"
+  "license": "MIT"
 }

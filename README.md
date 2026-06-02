@@ -73,5 +73,8 @@ node index.js
 ```
 
 
+## ライセンス
+[MIT License](LICENSE) で公開しています。Copyright (c) 2023-2026 tsZ
+
 [Sinkan]: https://sinkan.net/
 [Trello]: https://trello.com/ja
