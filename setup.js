@@ -29,8 +29,10 @@ const stepSinkanUrl = async () => {
   print();
   while (true) {
     const url = (await ask('iCal URL: ')).trim();
-    if (!url.startsWith('http')) {
-      printError('URLは http または https で始まる必要があります。');
+    // index.js の urlSource 検証と同じく http(s):// で始まることを必須にする
+    // （'http' で始まるだけの不正な文字列を弾く）。
+    if (!/^https?:\/\//i.test(url)) {
+      printError('URLは http:// または https:// で始まる必要があります。');
       continue;
     }
     process.stdout.write('  iCal URLに接続確認中...');
