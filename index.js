@@ -225,7 +225,9 @@ const decodeHtmlEntities = (value) =>
       const cp = body[1].toLowerCase() === 'x'
         ? parseInt(body.slice(2), 16)
         : parseInt(body.slice(1), 10);
-      return Number.isFinite(cp) ? String.fromCodePoint(cp) : whole;
+      // 有効な Unicode コードポイント(0〜0x10FFFF)のみ復号する。範囲外を
+      // String.fromCodePoint に渡すと RangeError で全体が落ちるため、元の文字列を残す。
+      return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : whole;
     }
     return HTML_NAMED_ENTITIES[body.toLowerCase()] ?? whole; // 未知の実体はそのまま残す
   });
