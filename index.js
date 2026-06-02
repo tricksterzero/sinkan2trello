@@ -1,7 +1,7 @@
 import { SINKAN_ICAL_URL, TRELLO_API_KEY, TRELLO_API_TOKEN, TRELLO_LIST_ID, createTrelloCardName } from './config.js';
 import { createTrelloClient } from './lib/trello.js';
 import { fetchWithRetry, sleep } from './lib/net.js';
-import { print, printError, printSuccess, printVerbose, printProgress, printProgressDone } from './lib/log.js';
+import { print, printError, printSuccess, printVerbose, printProgress, printProgressDone, clearProgress } from './lib/log.js';
 
 const trello = createTrelloClient(TRELLO_API_KEY, TRELLO_API_TOKEN);
 
@@ -75,9 +75,21 @@ const main = async () => {
       }
     }
   } catch (error) {
+    clearProgress(); // リトライ中の進捗行が残らないように消す
     print();
-    printError(`致命的なエラーが発生しました: ${error.message}`);
-    if(verboseMode) printVerbose(`スタックトレース:\n${error.stack}`);
+    if(error.kind === 'sinkan-fetch') {
+      printError('新刊.netに接続できませんでした。');
+      print('    サーバーが混雑しているか、一時的に応答していない可能性があります。');
+      print('    しばらく（数分〜数十分）時間をおいてから、もう一度実行してください。');
+      if(!verboseMode) print('    詳しい原因は -v / --verbose を付けて実行すると確認できます。');
+      if(verboseMode) {
+        printVerbose(`理由: ${error.cause?.message ?? error.message}`);
+        printVerbose(`スタックトレース:\n${(error.cause ?? error).stack}`);
+      }
+    } else {
+      printError(`致命的なエラーが発生しました: ${error.message}`);
+      if(verboseMode) printVerbose(`スタックトレース:\n${error.stack}`);
+    }
     process.exit(1);
   }
 
@@ -156,19 +168,29 @@ const addTrelloCard = (cardName, sinkanUrl) =>
 const fetchAndParseIcs = async (url) => {
   // 新刊.net は反応が悪い時間帯があり度々失敗するため、粘り強くリトライする。
   // 5回 / 30秒タイムアウト / 指数バックオフ 2→4→8→16秒（上限30秒）＋ジッター。
-  const res = await fetchWithRetry(url, {
-    timeout: 30 * 1000,
-    retries: 5,
-    retryDelay: 2000,
-    backoffFactor: 2,
-    maxDelay: 30 * 1000,
-    onRetry: ({ attempt, retries, isTimeout, status, error, delayMs }) => {
-      const reason = isTimeout ? 'タイムアウト' : (status ? `HTTP ${status}` : error.message);
-      const waitSec = (delayMs / 1000).toFixed(1);
-      process.stdout.write(`\r  … 新刊.netに接続中... ${reason}、${waitSec}秒後にリトライ (${attempt}/${retries - 1}回目)`);
-    },
-  });
-  const text = await res.text();
+  let text;
+  try {
+    const res = await fetchWithRetry(url, {
+      timeout: 30 * 1000,
+      retries: 5,
+      retryDelay: 2000,
+      backoffFactor: 2,
+      maxDelay: 30 * 1000,
+      onRetry: ({ attempt, retries, isTimeout, status, error, delayMs }) => {
+        const reason = isTimeout ? 'タイムアウト' : (status ? `HTTP ${status}` : error.message);
+        const waitSec = (delayMs / 1000).toFixed(1);
+        process.stdout.write(`\r  … 新刊.netに接続中... ${reason}、${waitSec}秒後にリトライ (${attempt}/${retries - 1}回目)`);
+      },
+    });
+    text = await res.text();
+  } catch (error) {
+    // 接続/取得の失敗は、main 側でユーザーフレンドリーに表示するためタグ付けする。
+    // （パース失敗とは区別する。パース失敗はそのまま致命的エラーとして扱う）
+    const friendly = new Error('新刊.netに接続できませんでした');
+    friendly.kind = 'sinkan-fetch';
+    friendly.cause = error;
+    throw friendly;
+  }
   return parseIcs(text);
 };
 
