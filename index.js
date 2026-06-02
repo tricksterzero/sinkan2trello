@@ -154,13 +154,17 @@ const fetchAllTrelloCards = async (verboseMode = false) => {
 const isDuplicateCard = (cards, cardName) =>
   cards.some((card) => card.name === cardName);
 
-const addTrelloCard = (cardName, sinkanUrl) =>
-  trello.addCard({
+const addTrelloCard = (cardName, sinkanUrl) => {
+  const card = {
     name: cardName,
-    urlSource: sinkanUrl,
     pos: 'top',
     idList: TRELLO_LIST_ID[0],
-  });
+  };
+  // sinkanUrl は非信頼な DESCRIPTION 由来。http(s) のときだけ添付元として渡し、
+  // javascript: 等の異常スキームや空文字は Trello に送らない。
+  if(/^https?:\/\//i.test(sinkanUrl)) card.urlSource = sinkanUrl;
+  return trello.addCard(card);
+};
 
 // =============================================================================
 // iCal
