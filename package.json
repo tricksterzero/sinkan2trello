@@ -1,0 +1,13 @@
+{
+  "name": "sinkan2trello",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "get-info": "node info.js",
+    "run-s2t": "node index.js"
+  },
+  "author": "tsZ",
+  "license": "ISC"
+}

@@ -1,0 +1,9 @@
+# 設定ファイル（APIキー/トークンを含むため管理外）
+config.js
+config.js.bak
+
+# 退避した過去のバックアップzip
+_archive/
+
+# Node（依存ゼロのため通常は生成されないが念のため）
+node_modules/
