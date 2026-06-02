@@ -1,6 +1,6 @@
 # 新刊.net to Trello
 
-[新刊.net][Sinkan] に登録したキーワードの新刊発売情報（iCal 形式）を取得し、[Trello][Trello] のカードとして自動登録する Node.js スクリプトです。読みたい本の発売を Trello で管理するための個人用ツールです。
+[新刊.net](https://sinkan.net/) に登録したキーワードの新刊発売情報（iCal 形式）を取得し、[Trello](https://trello.com/ja) のカードとして自動登録する Node.js スクリプトです。読みたい本の発売を Trello で管理するための個人用ツールです。
 
 - **依存ライブラリなし**（Node.js の標準機能だけで動作。追加のインストール作業は不要）
 - 重複登録を避けて、未登録の新刊だけをカード化
@@ -9,8 +9,8 @@
 ## 動作環境
 
 - **Node.js 18 以降**（未インストールなら [nodejs.org](https://nodejs.org/ja) から「推奨版」を導入）
-- [新刊.net][Sinkan] のアカウント（キーワード登録済み。後から追加も可）
-- [Trello][Trello] のアカウント
+- 新刊.net のアカウント（キーワード登録済み。後から追加も可）
+- Trello のアカウント
 
 ## 導入
 
@@ -51,18 +51,18 @@ node index.js
 
 ### 新刊.net の iCal URL
 
-ブラウザで [新刊.net][Sinkan] にログインし、[ICAL形式](https://sinkan.net/?action_ical_info=true) のページを開きます。表示される「カレンダーのアドレス」が iCal URL です。
+ブラウザで 新刊.net にログインし、[ICAL形式](https://sinkan.net/?action_ical_info=true) のページを開きます。表示される「カレンダーのアドレス」が iCal URL です。
 
 ### Trello の API キーとトークン
 
-1. ブラウザで [Trello][Trello] にログインした状態で [Power-Up & 統合](https://trello.com/power-ups/admin) を開きます。
+1. ブラウザで Trello にログインした状態で [Power-Up & 統合](https://trello.com/power-ups/admin) を開きます。
 2. 「新規」ボタンから Power-Up を作成します（名前は「APIKey発行用」など分かるもの、ワークスペースは自分のもの、その他は初期値や自分のメールアドレス・名前でかまいません）。
 3. 作成した Power-Up を開き、左メニューの「APIキー」を選ぶと **API キー** が表示されます。
 4. API キーの右の説明文にある「トークン」のリンクから、アカウントへのアクセスを許可すると **トークン** が表示されます。
 
 ### Trello のボードとリスト
 
-[Trello][Trello] で新刊情報の出力先となるボードを1つ作成し、その中にリストをいくつか作成しておきます（例: 「購入前」「購入済」「不要」）。`setup.js` 実行時に、このボードとリストを一覧から選択します。
+Trello で新刊情報の出力先となるボードを1つ作成し、その中にリストをいくつか作成しておきます（例: 「購入前」「購入済」「不要」）。`setup.js` 実行時に、このボードとリストを一覧から選択します。
 
 ## コマンド一覧
 
@@ -98,6 +98,3 @@ node index.js
 ## ライセンス
 
 [MIT License](LICENSE) で公開しています。Copyright (c) 2023-2026 tsZ
-
-[Sinkan]: https://sinkan.net/
-[Trello]: https://trello.com/ja
