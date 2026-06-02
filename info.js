@@ -1,6 +1,19 @@
-import { TRELLO_API_KEY, TRELLO_API_TOKEN, TRELLO_BOARD_ID, createTrelloCardName } from './config.js';
 import { createTrelloClient } from './lib/trello.js';
 import { print, printError, printSection, printProgress, printProgressDone, clearProgress } from './lib/log.js';
+
+// config.js は setup.js が生成する。未生成（初回・誤削除）のときは Node 生の
+// ERR_MODULE_NOT_FOUND スタックトレースではなく、setup への導線を出して終了する。
+let config;
+try {
+  config = await import('./config.js');
+} catch (err) {
+  if (err.code === 'ERR_MODULE_NOT_FOUND') {
+    printError('config.js が見つかりません。先に node setup.js を実行して初期設定してください。');
+    process.exit(1);
+  }
+  throw err;
+}
+const { TRELLO_API_KEY, TRELLO_API_TOKEN, TRELLO_BOARD_ID, createTrelloCardName } = config;
 
 const trello = createTrelloClient(TRELLO_API_KEY, TRELLO_API_TOKEN);
 
