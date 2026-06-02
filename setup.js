@@ -3,7 +3,7 @@ import { stdin as input, stdout as output } from 'process';
 import fs from 'fs';
 import { createTrelloClient } from './lib/trello.js';
 import { fetchWithRetry } from './lib/net.js';
-import { print, printSection, printError, printSuccess } from './lib/log.js';
+import { print, printSection, printError, printSuccess, clearProgress } from './lib/log.js';
 
 const CONFIG_PATH = './config.js';
 const BACKUP_PATH = './config.js.bak';
@@ -16,11 +16,7 @@ const rl = readline.createInterface({ input, output });
 
 const ask = (question) => rl.question(question);
 
-// 進捗行をクリアする（接続確認の上書き表示用）
-const clearLine = () => {
-  process.stdout.clearLine(0);
-  process.stdout.cursorTo(0);
-};
+// 進捗行のクリアは lib/log.js の clearProgress を使う（TTY セーフ・index.js と共通）。
 
 // =============================================================================
 // 対話ステップ
@@ -44,15 +40,15 @@ const stepSinkanUrl = async () => {
         timeout: 15000,
         retries: 3,
         onRetry: ({ attempt }) => {
-          clearLine();
+          clearProgress();
           process.stdout.write('  iCal URLに接続確認中... リトライ中... ' + attempt + '回目');
         },
       });
-      clearLine();
+      clearProgress();
       printSuccess('接続成功。');
       return url;
     } catch (err) {
-      clearLine();
+      clearProgress();
       printError('接続に失敗しました（' + err.message + '）。URLを確認して再入力してください。');
     }
   }
@@ -71,11 +67,11 @@ const stepTrelloCredentials = async () => {
     try {
       const trello = createTrelloClient(apiKey, apiToken);
       const me = await trello.getMe();
-      clearLine();
+      clearProgress();
       printSuccess(`接続成功 — ${me.fullName ?? me.username} としてログインしています。`);
       return { apiKey, apiToken };
     } catch {
-      clearLine();
+      clearProgress();
       printError('接続に失敗しました。APIキーとトークンを確認して再入力してください。');
       print();
     }
