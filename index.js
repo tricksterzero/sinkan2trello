@@ -207,6 +207,21 @@ const parseIcs = (icsText) => {
 const unescapeIcsText = (value) =>
   value.replace(/\\(.)/g, (_, ch) => (ch === 'n' || ch === 'N' ? '\n' : ch));
 
+// DESCRIPTION は HTML なので、葉のテキスト（作者・出版社・URL）に含まれ得る
+// HTMLエンティティを復元する。名前付き（&amp; 等）と数値参照（&#39; / &#x27;）に対応。
+// 注意: タグ除去・<br>分割の「後」に呼ぶこと。先に呼ぶと &lt; → < がタグと誤認される。
+const HTML_NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+const decodeHtmlEntities = (value) =>
+  value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body) => {
+    if(body[0] === '#') {
+      const cp = body[1].toLowerCase() === 'x'
+        ? parseInt(body.slice(2), 16)
+        : parseInt(body.slice(1), 10);
+      return Number.isFinite(cp) ? String.fromCodePoint(cp) : whole;
+    }
+    return HTML_NAMED_ENTITIES[body.toLowerCase()] ?? whole; // 未知の実体はそのまま残す
+  });
+
 const parseVEvent = (block) => {
   const get = (key) => {
     const match = block.match(new RegExp(`^${key}[;:][^\r\n]*`, 'm'));
@@ -221,7 +236,7 @@ const parseVEvent = (block) => {
   if(!dtstart || !summary) return null;
 
   const releaseDateStr = dtstart.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
-  const sinkanUrl      = description.match(/href=["'](.*?)["']/)?.[1] ?? '';
+  const sinkanUrl      = decodeHtmlEntities(description.match(/href=["'](.*?)["']/)?.[1] ?? '');
 
   // DESCRIPTION は <a href="URL">発売日<br />タイトル<br />作者<br />出版社<br /></a> の形。
   // ただし雑誌など作者がいないデータは「作者」の <br /> 行ごと省略され、
@@ -236,8 +251,8 @@ const parseVEvent = (block) => {
     .map((s) => s.trim())
     .filter(Boolean);
   const rest          = fields.slice(2); // [発売日, タイトル] を除いた残り
-  const publisherName = rest.length >= 1 ? rest[rest.length - 1] : '';
-  const authorName    = rest.length >= 2 ? rest[0] : '';
+  const publisherName = decodeHtmlEntities(rest.length >= 1 ? rest[rest.length - 1] : '');
+  const authorName    = decodeHtmlEntities(rest.length >= 2 ? rest[0] : '');
 
   return { releaseDateStr, bookTitle: summary, sinkanUrl, authorName, publisherName };
 };
