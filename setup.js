@@ -3,7 +3,7 @@ import { stdin as input, stdout as output } from 'process';
 import fs from 'fs';
 import { createTrelloClient } from './lib/trello.js';
 import { fetchWithRetry } from './lib/net.js';
-import { print, printSection, printError, printSuccess, clearProgress } from './lib/log.js';
+import { print, printSection, printError, printSuccess, printProgress, printProgressDone, clearProgress } from './lib/log.js';
 
 const CONFIG_PATH = './config.js';
 const BACKUP_PATH = './config.js.bak';
@@ -35,19 +35,19 @@ const stepSinkanUrl = async () => {
       printError('URLは http:// または https:// で始まる必要があります。');
       continue;
     }
-    process.stdout.write('  iCal URLに接続確認中...');
+    printProgress('iCal URLに接続確認中...');
     try {
       await fetchWithRetry(url, {
         options: { method: 'HEAD' },
         timeout: 15000,
         retries: 3,
-        onRetry: ({ attempt }) => {
-          clearProgress();
-          process.stdout.write('  iCal URLに接続確認中... リトライ中... ' + attempt + '回目');
+        onRetry: ({ attempt, retries, isTimeout, status, error, delayMs }) => {
+          const reason = isTimeout ? 'タイムアウト' : (status ? `HTTP ${status}` : error.message);
+          const waitSec = (delayMs / 1000).toFixed(1);
+          process.stdout.write(`\r  … iCal URLに接続確認中... ${reason}、${waitSec}秒後にリトライ (${attempt}/${retries - 1}回目)`);
         },
       });
-      clearProgress();
-      printSuccess('接続成功。');
+      printProgressDone('接続成功。');
       return url;
     } catch (err) {
       clearProgress();
@@ -65,12 +65,11 @@ const stepTrelloCredentials = async () => {
     const apiKey   = (await ask('API Key   : ')).trim();
     const apiToken = (await ask('API Token : ')).trim();
 
-    process.stdout.write('  Trello APIに接続確認中...');
+    printProgress('Trello APIに接続確認中...');
     try {
       const trello = createTrelloClient(apiKey, apiToken);
       const me = await trello.getMe();
-      clearProgress();
-      printSuccess(`接続成功 — ${me.fullName ?? me.username} としてログインしています。`);
+      printProgressDone(`接続成功 — ${me.fullName ?? me.username} としてログインしています。`);
       return { apiKey, apiToken };
     } catch {
       clearProgress();
