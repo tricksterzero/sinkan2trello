@@ -1,6 +1,6 @@
 import { SINKAN_ICAL_URL, TRELLO_API_KEY, TRELLO_API_TOKEN, TRELLO_LIST_ID, createTrelloCardName } from './config.js';
 import { createTrelloClient } from './lib/trello.js';
-import { fetchWithRetry, sleep } from './lib/net.js';
+import { fetchWithRetry, readTextCapped, sleep } from './lib/net.js';
 import { print, printError, printSuccess, printVerbose, printProgress, printProgressDone, clearProgress } from './lib/log.js';
 
 const trello = createTrelloClient(TRELLO_API_KEY, TRELLO_API_TOKEN);
@@ -178,6 +178,10 @@ const addTrelloCard = (cardName, sinkanUrl) => {
 // =============================================================================
 // iCal
 // =============================================================================
+// iCal 本文の読み込み上限（非信頼な外部フィードのメモリ枯渇対策）。
+// 実データは約 21KB なので 10MB あれば十分な余裕がありつつ暴走を防げる。
+const MAX_ICS_BYTES = 10 * 1024 * 1024;
+
 const fetchAndParseIcs = async (url) => {
   // 新刊.net は反応が悪い時間帯があり度々失敗するため、粘り強くリトライする。
   // 5回 / 30秒タイムアウト / 指数バックオフ 2→4→8→16秒（上限30秒）＋ジッター。
@@ -195,7 +199,7 @@ const fetchAndParseIcs = async (url) => {
         process.stdout.write(`\r  … 新刊.netに接続中... ${reason}、${waitSec}秒後にリトライ (${attempt}/${retries - 1}回目)`);
       },
     });
-    text = await res.text();
+    text = await readTextCapped(res, MAX_ICS_BYTES);
   } catch (error) {
     // 接続/取得の失敗は、main 側でユーザーフレンドリーに表示するためタグ付けする。
     // （パース失敗とは区別する。パース失敗はそのまま致命的エラーとして扱う）
