@@ -47,7 +47,7 @@ const main = async () => {
 
     if(allMode) print('  モード: 全件対象 (--all)');
     for(const event of events) {
-      const releaseDate = new Date(event.releaseDateStr);
+      const releaseDate = parseLocalDate(event.releaseDateStr);
       if(!allMode && releaseDate < firstOfMonth) {
         if(verboseMode) printVerbose(`対象外（期間外）: ${event.releaseDateStr} ${event.bookTitle}`);
         stats.outOfRange++;
@@ -114,6 +114,14 @@ const printSummary = ({ added, skipped, errors, outOfRange, elapsedMs, verboseMo
 // =============================================================================
 const startOfDay = (date) =>
   new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+// "YYYY-MM-DD" をローカルタイムゾーンの0時として Date 化する。
+// new Date("YYYY-MM-DD") は UTC 0時と解釈されるため、ローカル基準の
+// firstOfMonth（new Date(y, m, 1)）と比較すると基準がずれる。それを防ぐ。
+const parseLocalDate = (ymd) => {
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
 
 // =============================================================================
 // Trello
