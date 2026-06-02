@@ -12,7 +12,7 @@
 - `node setup.js` … 対話式の初期設定。`config.js` を生成する（既存があれば `config.js.bak` に退避）
 - `node info.js` … Trello のボード/リスト一覧・カード名サンプルを表示する
 - `run.bat` … Windows 用。`index.js` を `--verbose` で実行する
-- npm scripts: `npm run run-s2t`（= `node index.js`） / `npm run get-info`（= `node info.js`）
+- npm scripts: `npm start`（= `node index.js`） / `npm run setup`（= `node setup.js`） / `npm run info`（= `node info.js`）
 
 ## アーキテクチャ
 - `index.js` … 本体。処理の流れは次の通り。

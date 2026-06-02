@@ -1,12 +1,17 @@
 {
   "name": "sinkan2trello",
   "version": "1.0.0",
-  "description": "",
+  "description": "新刊.netの新刊発売情報(iCal)をTrelloカードに自動登録する個人用ツール",
   "type": "module",
   "main": "index.js",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "get-info": "node info.js",
-    "run-s2t": "node index.js"
+    "start": "node index.js",
+    "setup": "node setup.js",
+    "info": "node info.js"
   },
   "author": "tsZ",
   "license": "ISC"
