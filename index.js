@@ -154,13 +154,18 @@ const addTrelloCard = (cardName, sinkanUrl) =>
 // iCal
 // =============================================================================
 const fetchAndParseIcs = async (url) => {
+  // 新刊.net は反応が悪い時間帯があり度々失敗するため、粘り強くリトライする。
+  // 5回 / 30秒タイムアウト / 指数バックオフ 2→4→8→16秒（上限30秒）＋ジッター。
   const res = await fetchWithRetry(url, {
     timeout: 30 * 1000,
-    retries: 3,
-    retryDelay: 1000,
-    onRetry: ({ attempt, retries, isTimeout, error }) => {
-      const reason = isTimeout ? 'タイムアウト' : error.message;
-      process.stdout.write(`\r  … 新刊.netに接続中... ${reason}、リトライ中 (${attempt}/${retries - 1}回目)`);
+    retries: 5,
+    retryDelay: 2000,
+    backoffFactor: 2,
+    maxDelay: 30 * 1000,
+    onRetry: ({ attempt, retries, isTimeout, status, error, delayMs }) => {
+      const reason = isTimeout ? 'タイムアウト' : (status ? `HTTP ${status}` : error.message);
+      const waitSec = (delayMs / 1000).toFixed(1);
+      process.stdout.write(`\r  … 新刊.netに接続中... ${reason}、${waitSec}秒後にリトライ (${attempt}/${retries - 1}回目)`);
     },
   });
   const text = await res.text();
