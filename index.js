@@ -210,7 +210,11 @@ const unescapeIcsText = (value) =>
 // DESCRIPTION は HTML なので、葉のテキスト（作者・出版社・URL）に含まれ得る
 // HTMLエンティティを復元する。名前付き（&amp; 等）と数値参照（&#39; / &#x27;）に対応。
 // 注意: タグ除去・<br>分割の「後」に呼ぶこと。先に呼ぶと &lt; → < がタグと誤認される。
-const HTML_NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+// プレーンオブジェクトだと継承プロパティ（constructor 等）を拾い、&constructor; のような
+// 非信頼入力で誤った置換が起きる。プロトタイプなしのマップにして自前のキーだけを引く。
+const HTML_NAMED_ENTITIES = Object.assign(Object.create(null), {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+});
 const decodeHtmlEntities = (value) =>
   value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body) => {
     if(body[0] === '#') {
