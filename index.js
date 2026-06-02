@@ -233,9 +233,12 @@ const parseVEvent = (block) => {
   const summary     = unescapeIcsText(get('SUMMARY'));
   const description = unescapeIcsText(get('DESCRIPTION'));
 
-  if(!dtstart || !summary) return null;
-
-  const releaseDateStr = dtstart.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+  // DTSTART から発売日(YYYY-MM-DD)を取り出す。終日形式(20260302)が基本だが、
+  // 日時形式(20260302T000000Z 等)でも先頭の YYYYMMDD を採用する（時刻部は無視）。
+  // 取り出せない＝日付不明なイベントは登録対象外として除外する。
+  const dateMatch = dtstart.match(/^(\d{4})(\d{2})(\d{2})/);
+  if(!dateMatch || !summary) return null;
+  const releaseDateStr = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
   const sinkanUrl      = decodeHtmlEntities(description.match(/href=["'](.*?)["']/)?.[1] ?? '');
 
   // DESCRIPTION は <a href="URL">発売日<br />タイトル<br />作者<br />出版社<br /></a> の形。
