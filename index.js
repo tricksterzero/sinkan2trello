@@ -180,9 +180,22 @@ const parseVEvent = (block) => {
 
   const releaseDateStr = dtstart.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
   const sinkanUrl      = description.match(/href=["'](.*?)["']/)?.[1] ?? '';
-  const parts          = description.split('<br />');
-  const authorName     = parts[2] ?? '';
-  const publisherName  = (parts[3] && parts[3] !== '</a>') ? parts[3] : '';
+
+  // DESCRIPTION は <a href="URL">発売日<br />タイトル<br />作者<br />出版社<br /></a> の形。
+  // ただし雑誌など作者がいないデータは「作者」の <br /> 行ごと省略され、
+  // <a ...>発売日<br />タイトル<br />出版社<br /></a> のように可変長になる。
+  // そこで <a>/</a> を除去 → <br>（表記ゆれ許容）で分割 → trim → 空要素除去し、
+  // 「出版社は常に末尾」「タイトルは常に2番目」という構造で取り出す。
+  // rest = タイトルより後ろ = [作者, 出版社] か [出版社] か []。
+  const fields = description
+    .replace(/<a\b[^>]*>/i, '')
+    .replace(/<\/a>/i, '')
+    .split(/<br\s*\/?>/i)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const rest          = fields.slice(2); // [発売日, タイトル] を除いた残り
+  const publisherName = rest.length >= 1 ? rest[rest.length - 1] : '';
+  const authorName    = rest.length >= 2 ? rest[0] : '';
 
   return { releaseDateStr, bookTitle: summary, sinkanUrl, authorName, publisherName };
 };
