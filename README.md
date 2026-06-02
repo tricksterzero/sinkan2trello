@@ -16,11 +16,11 @@
 
 ### 1. 取得
 
-このリポジトリを clone するか、ZIP でダウンロードして展開してください。
+以下のコマンドでこのリポジトリを取得します。
 
 ```sh
-git clone <このリポジトリのURL>
-cd Sinkan2Trello
+git clone https://github.com/tricksterzero/sinkan2trello.git
+cd sinkan2trello
 ```
 
 ### 2. 初期設定
