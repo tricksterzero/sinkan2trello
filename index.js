@@ -35,7 +35,7 @@ const main = async () => {
 
     if(verboseMode) {
       print();
-      printVerbose(`対象期間: ${allMode ? '全件' : firstOfMonth.toISOString().slice(0, 10) + ' 以降'}`);
+      printVerbose(`対象期間: ${allMode ? '全件' : formatLocalDate(firstOfMonth) + ' 以降'}`);
       printVerbose(`パース結果のサンプル（最大3件）:`);
       events.slice(0, 3).forEach((e, i) => {
         printVerbose(`  [${i + 1}] ${e.releaseDateStr} / ${e.bookTitle} / ${e.authorName || '不明'} / ${e.publisherName || '不明'}`);
@@ -133,6 +133,15 @@ const startOfDay = (date) =>
 const parseLocalDate = (ymd) => {
   const [y, m, d] = ymd.split('-').map(Number);
   return new Date(y, m - 1, d);
+};
+
+// Date をローカルタイムゾーン基準の "YYYY-MM-DD" に整形する。
+// toISOString() は UTC 変換で日付がずれる（JST では1日早まる）ため使わない。
+const formatLocalDate = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 };
 
 // =============================================================================
