@@ -200,6 +200,13 @@ const parseIcs = (icsText) => {
   return blocks.map(parseVEvent).filter(Boolean);
 };
 
+// iCal の TEXT 値のエスケープを復元する（RFC5545）。
+// \\ → \ 、 \, → , 、 \; → ; 、 \n / \N → 改行。
+// \\ を1要素として左から1パスで処理するので、\\, のような連続も正しく扱える
+// （まず \\ を \ にし、続く , は素通し → 文字どおりの "\," になる）。
+const unescapeIcsText = (value) =>
+  value.replace(/\\(.)/g, (_, ch) => (ch === 'n' || ch === 'N' ? '\n' : ch));
+
 const parseVEvent = (block) => {
   const get = (key) => {
     const match = block.match(new RegExp(`^${key}[;:][^\r\n]*`, 'm'));
@@ -207,9 +214,9 @@ const parseVEvent = (block) => {
     return match[0].slice(match[0].indexOf(':') + 1).trim();
   };
 
-  const dtstart     = get('DTSTART');
-  const summary     = get('SUMMARY');
-  const description = get('DESCRIPTION');
+  const dtstart     = get('DTSTART'); // DATE 値なので TEXT エスケープ対象外
+  const summary     = unescapeIcsText(get('SUMMARY'));
+  const description = unescapeIcsText(get('DESCRIPTION'));
 
   if(!dtstart || !summary) return null;
 
