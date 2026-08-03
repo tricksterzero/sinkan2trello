@@ -1,6 +1,11 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { createTrelloClient } from './lib/trello.js';
 import { fetchWithRetry, readTextCapped, sleep } from './lib/net.js';
 import { print, printError, printSuccess, printVerbose, printProgress, printProgressDone, clearProgress } from './lib/log.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // config.js は setup.js が生成する。未生成（初回・誤削除）のときは Node 生の
 // ERR_MODULE_NOT_FOUND スタックトレースではなく、setup への導線を出して終了する。
@@ -17,6 +22,47 @@ try {
 const { SINKAN_ICAL_URL, TRELLO_API_KEY, TRELLO_API_TOKEN, TRELLO_LIST_ID, createTrelloCardName } = config;
 
 const trello = createTrelloClient(TRELLO_API_KEY, TRELLO_API_TOKEN);
+
+// iCalのDESCRIPTIONから拾った sinkanUrl をTrelloへ渡す際の信頼ホスト。
+// SINKAN_ICAL_URL（ユーザー設定・信頼済み）のホスト名を基準にする。
+const SINKAN_HOST = new URL(SINKAN_ICAL_URL).hostname;
+
+// =============================================================================
+// 多重起動防止（簡易ロックファイル）
+// =============================================================================
+// 新刊.net の不調でリトライが伸びると1回の実行が数分かかることがある。その間に
+// スタートアップ起動と手動実行が重なる等で2プロセスが同時に走ると、既存カード
+// 一覧のスナップショットがそれぞれ独立に古くなり、同じ本を二重登録し得る。
+// 排他制御は厳密でなくてよい（個人用・低頻度実行）ため、単純なロックファイルで防ぐ。
+const LOCK_PATH = path.join(__dirname, '.run.lock');
+// 想定される最大実行時間（iCal取得の全リトライ＋カード登録ループ）より
+// 十分長く取った閾値。前回実行が異常終了して残ったロックを自動的に無効化する。
+const STALE_LOCK_MS = 20 * 60 * 1000;
+
+const acquireLock = () => {
+  try {
+    fs.writeFileSync(LOCK_PATH, String(process.pid), { flag: 'wx' }); // 'wx': 既存なら失敗（原子的）
+    return;
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+  }
+  const age = Date.now() - fs.statSync(LOCK_PATH).mtimeMs;
+  if (age > STALE_LOCK_MS) {
+    fs.writeFileSync(LOCK_PATH, String(process.pid));
+    return;
+  }
+  const err = new Error(
+    `既に実行中の可能性があります（ロックファイル: ${LOCK_PATH}）。` +
+    `前回の実行が異常終了して残った場合は、${Math.round(STALE_LOCK_MS / 60000)}分待つか` +
+    `ロックファイルを削除してから再実行してください。`
+  );
+  err.kind = 'already-running';
+  throw err;
+};
+
+const releaseLock = () => {
+  try { fs.unlinkSync(LOCK_PATH); } catch {}
+};
 
 // =============================================================================
 // メイン関数
@@ -118,7 +164,9 @@ const main = async () => {
       printError(`致命的なエラーが発生しました: ${error.message}`);
       if(verboseMode) printVerbose(`スタックトレース:\n${error.stack}`);
     }
-    process.exit(1);
+    // ロック解放（呼び出し元のfinally）を経由して終了するため、ここではprocess.exit()しない。
+    process.exitCode = 1;
+    return;
   }
 
   printSummary({ ...stats, elapsedMs: Date.now() - startTime, verboseMode });
@@ -221,10 +269,20 @@ const addTrelloCard = (cardName, sinkanUrl) => {
     pos: 'top',
     idList: TRELLO_LIST_ID[0],
   };
-  // sinkanUrl は非信頼な DESCRIPTION 由来。http(s) のときだけ添付元として渡し、
-  // javascript: 等の異常スキームや空文字は Trello に送らない。
-  if(/^https?:\/\//i.test(sinkanUrl)) card.urlSource = sinkanUrl;
+  // sinkanUrl は非信頼な DESCRIPTION 由来。http(s) かつ SINKAN_ICAL_URL と同じホストの
+  // ときだけ添付元として渡す。javascript: 等の異常スキーム・空文字に加え、iCal配信元が
+  // 侵害された場合等に攻撃者指定URLをTrelloへ渡してしまうリスクをホスト制限で抑える。
+  if(isTrustedSinkanUrl(sinkanUrl)) card.urlSource = sinkanUrl;
   return trello.addCard(card);
+};
+
+const isTrustedSinkanUrl = (url) => {
+  if(!/^https?:\/\//i.test(url)) return false;
+  try {
+    return new URL(url).hostname === SINKAN_HOST;
+  } catch {
+    return false;
+  }
 };
 
 // =============================================================================
@@ -353,9 +411,18 @@ const parseVEvent = (block) => {
 // =============================================================================
 // エントリーポイント
 // =============================================================================
-main()
-  .then(() => {})
-  .catch((error) => {
+let lockAcquired = false;
+try {
+  acquireLock();
+  lockAcquired = true;
+  await main();
+} catch (error) {
+  if(error.kind === 'already-running') {
+    printError(error.message);
+  } else {
     console.error(error);
-    process.exitCode = 1;
-  });
+  }
+  process.exitCode = 1;
+} finally {
+  if(lockAcquired) releaseLock();
+}

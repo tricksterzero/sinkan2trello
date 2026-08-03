@@ -29,9 +29,9 @@ review-log.md は作らず本ファイル単体で運用する（発見内容・
 
 | ファイル | 状態 | 相互作用チェック相手 |
 |---|---|---|
-| index.js | 済(2026-08-03、3件修正+2件監視) | lib/trello.js（createTrelloClient）、lib/net.js（fetchWithRetry/readTextCapped/sleep）、lib/log.js、config.js（設定値・createTrelloCardName）。iCal非信頼入力のパース（parseVEvent）とTrello重複判定（isDuplicateCard）の整合に注意 |
-| lib/net.js | 済(2026-08-03、1件修正+1件監視) | index.js・lib/trello.js・setup.js から fetchWithRetry を利用される共通モジュール。リトライ・タイムアウト・サイズ上限の挙動が呼び出し側の前提と食い違っていないか |
-| lib/trello.js | 済(2026-08-03、1件修正) | lib/net.js（fetchWithRetry/fetchWithTimeout）に依存。index.js・info.js・setup.js から呼ばれる。GET/POSTでリトライ方針が異なる点（POSTは二重登録回避で非リトライ）が呼び出し側の期待と一致しているか |
+| index.js | 済(2026-08-03、5件修正+1件監視) | lib/trello.js（createTrelloClient）、lib/net.js（fetchWithRetry/readTextCapped/sleep）、lib/log.js、config.js（設定値・createTrelloCardName）。iCal非信頼入力のパース（parseVEvent）とTrello重複判定（isDuplicateCard）の整合に注意 |
+| lib/net.js | 済(2026-08-03、2件修正+1件監視) | index.js・lib/trello.js・setup.js から fetchWithRetry を利用される共通モジュール。リトライ・タイムアウト・サイズ上限の挙動が呼び出し側の前提と食い違っていないか |
+| lib/trello.js | 済(2026-08-03、2件修正) | lib/net.js（fetchWithRetry/fetchWithTimeout）に依存。index.js・info.js・setup.js から呼ばれる。GET/POSTでリトライ方針が異なる点（POSTは二重登録回避で非リトライ）が呼び出し側の期待と一致しているか |
 
 ## 低優先（小さい共有モジュール・補助スクリプト）
 
@@ -67,8 +67,13 @@ review-log.md は作らず本ファイル単体で運用する（発見内容・
 - **A**: `lib/net.js` の `fetchWithRetry` は `retries=0`（または負数・NaN）を渡すと例外もreturnもせず `undefined` を返す。現状の呼び出し元は全て `retries>=3` のため発現しない。
 - **C**: `index.js` と `info.js` で「config.js 動的import失敗時にsetup.jsへ誘導する」8行程度のブロックがほぼ同一コードとして重複。加えてCodexの指摘: config.js自体は存在するが内部で別モジュールのimportに失敗した場合も同じ `ERR_MODULE_NOT_FOUND` 経路に入り、「config.jsが見つかりません」という誤った案内になり得る（現状config.jsは他をimportしないため未発現）。
 - **D**: `parseVEvent` の `rest` 配列取り出しは「rest[0]=作者、rest[末尾]=出版社」という2要素前提。実データ36件では `rest.length` は1か2のみで想定通りだったが、将来サイト側で複数作者が個別`<br>`行になった場合（rest.length>=3）は中間要素が失われる。
-- 並行実行（2プロセス同時起動）での二重登録: 既存カード一覧を実行冒頭で1回だけ取得するスナップショット方式のため、同時に2プロセスが走ると両方が「未登録」と判定し得る。CLAUDE.mdが明記する「同一実行内の同名イベント複数」仕様とは別角度。
-- Trelloカード一覧取得（`lib/trello.js` の `getCards`）にページング処理がない。リストのカード数がAPIの既定ページサイズを超えた場合に全件取得できない可能性。Trello APIの既定上限は一次情報未確認。
-- `Retry-After` ヘッダの待ち時間に `maxDelay` によるキャップが無い。サーバーが極端に長い値を返すとその通り待ち続ける。
-- `index.js` の `urlSource` はスキーム（http/https）のみ検証しホスト制限が無い。新刊.net以外の任意URLをTrelloへ渡せてしまう余地がある（フィード侵害時の懸念）。
 - iCalの日付が構文（8桁数字）のみの検証で範囲外値（例: 13月99日）を弾いていない。`new Date()` が繰り上げ正規化するため実害は小さいが、実データでは終日形式のみで未発現。
+
+## 精査記録（2026-08-03、続き: 「中」優先度4件の対応）
+
+Codexが指摘した「中」優先度4件（並行実行の二重登録・Trelloページング未対応・Retry-After上限なし・urlSourceホスト制限なし）に対応。
+
+1. **並行実行（2プロセス同時起動）での二重登録**（index.js）: 実行冒頭にプロジェクト直下 `.run.lock`（`.gitignore` 管理下）を原子的に作成（`fs.writeFileSync` の `wx` フラグ）する簡易ロックを追加。既に存在する場合は多重起動とみなして即エラー終了。前回異常終了で残ったロックは20分経過で自動的に無効化する（`STALE_LOCK_MS`）。厳密な排他制御ではないが、個人用・低頻度実行には十分と判断（4はあまり多重起動は想定していないが、新刊.net不調時のリトライで1回の実行が数分に伸び、その間に手動再実行と重なるケースが現実的にあり得るため導入）。標準入出力のみの単体テストで多重起動検知・自動失効を確認済み（実データへのアクセスなし）。
+2. **Trelloカード一覧取得にページング処理がない**（lib/trello.js）: 一次情報（Trello公式ドキュメント・コミュニティフォーラム）で「一覧系エンドポイントは1リクエスト最大1000件、超過時は `before`/`since` でページングする」ことを確認したが、cards エンドポイントの返却順とカーソル基準の対応関係までは確証を得られなかったため、実装が誤っている場合のリスク（無限ループ・取りこぼし）を避け、ページング自体は実装しないことにした。代わりに `getCards` に `limit: 1000` を明示し、ちょうど1000件返った場合は「取得しきれていない可能性がある」として `fetchAllTrelloCards` と同じ「母集合が欠けたら全停止」方針でエラーにする（黙って不完全なデータで進めない）。実データ（全4リスト、最大238件）で疎通確認済み。
+3. **`Retry-After` ヘッダに上限キャップがない**（lib/net.js）: `parseRetryAfter` に絶対上限 `MAX_RETRY_AFTER_MS`（5分）を追加。サーバーが極端に長い値を指定してもスクリプトが長時間ハングしないようにした。
+4. **`urlSource` にホスト制限がない**（index.js）: `SINKAN_ICAL_URL` のホスト名を信頼ホストとして保持し、`isTrustedSinkanUrl()` でスキーム検証に加えてホスト一致を確認するよう変更。iCal配信元が侵害された場合等に任意URLをTrelloへ渡してしまうリスクを抑える。単体テストでサブドメイン偽装・別ホスト・不正スキームが正しく弾かれることを確認済み。
