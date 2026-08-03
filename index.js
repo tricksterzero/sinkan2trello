@@ -3,22 +3,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createTrelloClient } from './lib/trello.js';
 import { fetchWithRetry, readTextCapped, sleep } from './lib/net.js';
-import { print, printError, printSuccess, printVerbose, printProgress, printProgressDone, clearProgress } from './lib/log.js';
+import { print, printError, printSuccess, printVerbose, printWarning, printProgress, printProgressDone, clearProgress } from './lib/log.js';
+import { loadConfig } from './lib/config-loader.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// config.js は setup.js が生成する。未生成（初回・誤削除）のときは Node 生の
-// ERR_MODULE_NOT_FOUND スタックトレースではなく、setup への導線を出して終了する。
-let config;
-try {
-  config = await import('./config.js');
-} catch (err) {
-  if (err.code === 'ERR_MODULE_NOT_FOUND') {
-    printError('config.js が見つかりません。先に node setup.js を実行して初期設定してください。');
-    process.exit(1);
-  }
-  throw err;
-}
+const config = await loadConfig();
 const { SINKAN_ICAL_URL, TRELLO_API_KEY, TRELLO_API_TOKEN, TRELLO_LIST_ID, createTrelloCardName } = config;
 
 const trello = createTrelloClient(TRELLO_API_KEY, TRELLO_API_TOKEN);
@@ -91,6 +81,15 @@ const main = async () => {
     printProgress('新刊.netからiCalデータを取得中...');
     const events = await fetchAndParseIcs(SINKAN_ICAL_URL);
     printProgressDone(`新刊情報を ${events.length} 件取得。`);
+
+    // DESCRIPTION が想定（発売日/タイトル/[作者]/出版社の可変長<br>区切り）から
+    // 外れているイベントを検知して警告する（-v なしでも表示、サイト側フォーマット
+    // 変更に気づけるようにするため）。処理自体は止めず、best-effortで続行する。
+    const formatAnomalies = events.filter((e) => e.formatAnomaly);
+    if(formatAnomalies.length > 0) {
+      printWarning(`新刊.netの応答形式が想定と異なるイベントが ${formatAnomalies.length} 件あります（作者情報等が正しく取得できていない可能性）。`);
+      formatAnomalies.forEach((e) => printWarning(`  - ${e.releaseDateStr} ${e.bookTitle}`));
+    }
 
     if(verboseMode) {
       print();
@@ -383,10 +382,14 @@ const parseVEvent = (block) => {
 
   // DTSTART から発売日(YYYY-MM-DD)を取り出す。終日形式(20260302)が基本だが、
   // 日時形式(20260302T000000Z 等)でも先頭の YYYYMMDD を採用する（時刻部は無視）。
-  // 取り出せない＝日付不明なイベントは登録対象外として除外する。
+  // 取り出せない＝日付不明なイベントは登録対象外として除外する。月・日の範囲外値
+  // （例: 13月99日）も同様に除外する（new Date() の繰り上げ正規化に任せない）。
   const dateMatch = dtstart.match(/^(\d{4})(\d{2})(\d{2})/);
   if(!dateMatch || !summary) return null;
-  const releaseDateStr = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+  const [, y, mo, d] = dateMatch;
+  const month = Number(mo), day = Number(d);
+  if(month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const releaseDateStr = `${y}-${mo}-${d}`;
   const sinkanUrl      = stripControlChars(decodeHtmlEntities(description.match(/href=["'](.*?)["']/)?.[1] ?? ''));
 
   // DESCRIPTION は <a href="URL">発売日<br />タイトル<br />作者<br />出版社<br /></a> の形。
@@ -404,8 +407,12 @@ const parseVEvent = (block) => {
   const rest          = fields.slice(2); // [発売日, タイトル] を除いた残り
   const publisherName = stripControlChars(decodeHtmlEntities(rest.length >= 1 ? rest[rest.length - 1] : ''));
   const authorName    = stripControlChars(decodeHtmlEntities(rest.length >= 2 ? rest[0] : ''));
+  // rest.length が3以上（複数作者が個別行になった等）は現行の「rest[0]=作者、
+  // rest[末尾]=出版社」という前提から外れ、中間要素を失う。実データでは未観測だが、
+  // 起きたら気づけるようフラグを立てる（呼び出し側で警告表示に使う）。
+  const formatAnomaly = rest.length > 2;
 
-  return { releaseDateStr, bookTitle: summary, sinkanUrl, authorName, publisherName };
+  return { releaseDateStr, bookTitle: summary, sinkanUrl, authorName, publisherName, formatAnomaly };
 };
 
 // =============================================================================

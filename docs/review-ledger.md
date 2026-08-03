@@ -29,17 +29,18 @@ review-log.md は作らず本ファイル単体で運用する（発見内容・
 
 | ファイル | 状態 | 相互作用チェック相手 |
 |---|---|---|
-| index.js | 済(2026-08-03、5件修正+1件監視) | lib/trello.js（createTrelloClient）、lib/net.js（fetchWithRetry/readTextCapped/sleep）、lib/log.js、config.js（設定値・createTrelloCardName）。iCal非信頼入力のパース（parseVEvent）とTrello重複判定（isDuplicateCard）の整合に注意 |
-| lib/net.js | 済(2026-08-03、2件修正+1件監視) | index.js・lib/trello.js・setup.js から fetchWithRetry を利用される共通モジュール。リトライ・タイムアウト・サイズ上限の挙動が呼び出し側の前提と食い違っていないか |
+| index.js | 済(2026-08-03、7件修正) | lib/trello.js（createTrelloClient）、lib/net.js（fetchWithRetry/readTextCapped/sleep）、lib/log.js、lib/config-loader.js、config.js（設定値・createTrelloCardName）。iCal非信頼入力のパース（parseVEvent）とTrello重複判定（isDuplicateCard）の整合に注意 |
+| lib/net.js | 済(2026-08-03、3件修正) | index.js・lib/trello.js・setup.js から fetchWithRetry を利用される共通モジュール。リトライ・タイムアウト・サイズ上限の挙動が呼び出し側の前提と食い違っていないか |
 | lib/trello.js | 済(2026-08-03、2件修正) | lib/net.js（fetchWithRetry/fetchWithTimeout）に依存。index.js・info.js・setup.js から呼ばれる。GET/POSTでリトライ方針が異なる点（POSTは二重登録回避で非リトライ）が呼び出し側の期待と一致しているか |
 
 ## 低優先（小さい共有モジュール・補助スクリプト）
 
 | ファイル | 状態 | 相互作用チェック相手 |
 |---|---|---|
-| lib/log.js | 済(2026-08-03) | index.js・setup.js・info.js 共通の出力ヘルパー。発見なし |
+| lib/log.js | 済(2026-08-03、1件追加) | index.js・setup.js・info.js 共通の出力ヘルパー。printWarning を追加 |
+| lib/config-loader.js | 済(2026-08-03、新規) | index.js・info.js が共通利用。config.js自体の欠如と内部エラーを区別する（下記「精査記録」続き参照） |
 | setup.js | 済(2026-08-03) | lib/trello.js・lib/net.js・lib/log.js を利用。生成する config.js が config.init.js の構造と一致していることを確認済み |
-| info.js | 済(2026-08-03、1件監視) | lib/trello.js・lib/log.js・config.js に依存。TRELLO_BOARD_ID は info.js 専用。config.js動的importのエラーハンドリングがindex.jsと重複（下記「既知リスク・監視点」C） |
+| info.js | 済(2026-08-03、1件修正) | lib/trello.js・lib/log.js・lib/config-loader.js に依存。TRELLO_BOARD_ID は info.js 専用 |
 | config.init.js | 済(2026-08-03) | 手動設定用テンプレート（setup.js とは独立、どこからも import されない）。createTrelloCardName のデフォルト実装がsetup.js生成物・index.jsの期待する引数構造と一致していることを確認済み |
 
 ## 対象外
@@ -62,12 +63,7 @@ review-log.md は作らず本ファイル単体で運用する（発見内容・
 
 - lib/trello.js の `get()`/`request()` で `res.json()` の呼び出しがtry-catchの外にあり、Trello APIが不正なJSONを返した場合に生のparseエラーがそのまま投げられていた。上記1の修正（readBody経由でのタイムアウト保護区間拡張）と同時にtry-catch内へ移動し、統一エラーメッセージ（`Trello APIの応答をJSONとして解釈できませんでした: ...`）に変換されるよう修正。
 
-**既知リスク・監視点（今回は対応せず、記録のみ）**
-
-- **A**: `lib/net.js` の `fetchWithRetry` は `retries=0`（または負数・NaN）を渡すと例外もreturnもせず `undefined` を返す。現状の呼び出し元は全て `retries>=3` のため発現しない。
-- **C**: `index.js` と `info.js` で「config.js 動的import失敗時にsetup.jsへ誘導する」8行程度のブロックがほぼ同一コードとして重複。加えてCodexの指摘: config.js自体は存在するが内部で別モジュールのimportに失敗した場合も同じ `ERR_MODULE_NOT_FOUND` 経路に入り、「config.jsが見つかりません」という誤った案内になり得る（現状config.jsは他をimportしないため未発現）。
-- **D**: `parseVEvent` の `rest` 配列取り出しは「rest[0]=作者、rest[末尾]=出版社」という2要素前提。実データ36件では `rest.length` は1か2のみで想定通りだったが、将来サイト側で複数作者が個別`<br>`行になった場合（rest.length>=3）は中間要素が失われる。
-- iCalの日付が構文（8桁数字）のみの検証で範囲外値（例: 13月99日）を弾いていない。`new Date()` が繰り上げ正規化するため実害は小さいが、実データでは終日形式のみで未発現。
+**既知リスク・監視点（今回は対応せず、記録のみ）**: 下記「精査記録（続き: 「低」優先度4件の対応）」で全て対応済み。現時点で未対応の既知項目なし。
 
 ## 精査記録（2026-08-03、続き: 「中」優先度4件の対応）
 
@@ -77,3 +73,14 @@ Codexが指摘した「中」優先度4件（並行実行の二重登録・Trell
 2. **Trelloカード一覧取得にページング処理がない**（lib/trello.js）: 一次情報（Trello公式ドキュメント・コミュニティフォーラム）で「一覧系エンドポイントは1リクエスト最大1000件、超過時は `before`/`since` でページングする」ことを確認したが、cards エンドポイントの返却順とカーソル基準の対応関係までは確証を得られなかったため、実装が誤っている場合のリスク（無限ループ・取りこぼし）を避け、ページング自体は実装しないことにした。代わりに `getCards` に `limit: 1000` を明示し、ちょうど1000件返った場合は「取得しきれていない可能性がある」として `fetchAllTrelloCards` と同じ「母集合が欠けたら全停止」方針でエラーにする（黙って不完全なデータで進めない）。実データ（全4リスト、最大238件）で疎通確認済み。
 3. **`Retry-After` ヘッダに上限キャップがない**（lib/net.js）: `parseRetryAfter` に絶対上限 `MAX_RETRY_AFTER_MS`（5分）を追加。サーバーが極端に長い値を指定してもスクリプトが長時間ハングしないようにした。
 4. **`urlSource` にホスト制限がない**（index.js）: `SINKAN_ICAL_URL` のホスト名を信頼ホストとして保持し、`isTrustedSinkanUrl()` でスキーム検証に加えてホスト一致を確認するよう変更。iCal配信元が侵害された場合等に任意URLをTrelloへ渡してしまうリスクを抑える。単体テストでサブドメイン偽装・別ホスト・不正スキームが正しく弾かれることを確認済み。
+
+## 精査記録（2026-08-03、続き: 「低」優先度4件の対応）
+
+残っていた「低」優先度4件（A・C・D・iCal日付の範囲検証なし）に対応。
+
+1. **A: `fetchWithRetry` の `retries<1` エッジケース**（lib/net.js）: `retries` が1未満（0・負数・NaN・非整数）のとき例外を投げる防御的ガードを追加。実際の呼び出し元は全て `retries>=3` のため挙動は変わらない。単体テストで `retries=0/-1/NaN/1.5` いずれも意図通り例外になることを確認。
+2. **C: config.js動的importのエラーハンドリング重複＋誤誘導リスク**（index.js・info.js）: 共通ヘルパー `lib/config-loader.js`（`loadConfig()`）に統合。従来は `import()` の `ERR_MODULE_NOT_FOUND` だけで「config.js見つからず」と判定していたため、config.js自体は存在するが内部で別モジュールのimportに失敗した場合も同じ案内になる誤誘導リスクがあった。`fs.existsSync` で config.js 自体の有無を先に確認する方式に変更し、内部エラーの場合は生のエラーがそのまま表面化するようにした。擬似プロジェクトでの実地確認: (a) config.js不在 → 想定通り `config.js が見つかりません` + 終了コード1、(b) config.js内で存在しないモジュールをimport → 誤案内にならず本来の `ERR_MODULE_NOT_FOUND`（該当モジュール名付き）がそのまま表面化、を確認済み。
+3. **D: 複数作者等でrest.length>=3のとき中間要素が失われる**（index.js）: `parseVEvent` に `formatAnomaly` フラグを追加（rest.length>2で true）。main側で該当イベントがあれば `-v` なしでも `printWarning` で件名付きの警告を出すよう変更（サイト側フォーマット変更に気づけるようにする。処理は止めずbest-effortで続行）。lib/log.js に `printWarning` ヘルパーを追加。単体テストでrest.length=3のケースでformatAnomaly:trueになることを確認。
+4. **iCal日付の範囲外値を弾いていなかった**（index.js）: `parseVEvent` のDTSTARTパース後に月(1-12)・日(1-31)の粗い範囲チェックを追加し、範囲外は他の不正イベント同様nullを返して除外するようにした（`new Date()` の繰り上げ正規化に任せない）。単体テストで月13・月0のケースがnullになることを確認（日31超え自体は粗いチェックの対象外である点も確認済み）。
+
+全て構文チェック・単体テスト・実データへの読み取り専用スモークテスト（`info.js` 実機実行）で確認済み。
