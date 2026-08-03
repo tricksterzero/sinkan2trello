@@ -99,6 +99,11 @@ const main = async () => {
         printVerbose(`理由: ${error.cause?.message ?? error.message}`);
         printVerbose(`スタックトレース:\n${(error.cause ?? error).stack}`);
       }
+    } else if(error.kind === 'sinkan-format') {
+      printError('新刊.netから予期しない形式の応答がありました。');
+      print('    サイトの障害・メンテナンス中、または配信フォーマットが変更された可能性があります。');
+      print(`    詳細: ${error.message}`);
+      if(verboseMode) printVerbose(`スタックトレース:\n${error.stack}`);
     } else if(error.kind === 'trello-fetch') {
       printError('Trelloのカード一覧を取得できませんでした。');
       print(error.message); // 失敗したリストIDと理由（fetchAllTrelloCards で組み立て済み）
@@ -117,6 +122,10 @@ const main = async () => {
   }
 
   printSummary({ ...stats, elapsedMs: Date.now() - startTime, verboseMode });
+
+  // カード登録の個別失敗が1件でもあれば、タスクスケジューラ等の監視から
+  // 検知できるよう正常終了(0)にしない。
+  if(stats.errors > 0) process.exitCode = 1;
 };
 
 // =============================================================================
@@ -230,7 +239,10 @@ const fetchAndParseIcs = async (url) => {
   // 5回 / 30秒タイムアウト / 指数バックオフ 2→4→8→16秒（上限30秒）＋ジッター。
   let text;
   try {
-    const res = await fetchWithRetry(url, {
+    // readBody で本文読み込み（readTextCapped）までタイムアウト保護区間に含める。
+    // fetch() 自体はヘッダー受信時点で解決してしまうため、これを外に出すと
+    // 相手がslow-dripで本文を送り続けた場合に無期限でハングし得る。
+    text = await fetchWithRetry(url, {
       timeout: 30 * 1000,
       retries: 5,
       retryDelay: 2000,
@@ -241,8 +253,8 @@ const fetchAndParseIcs = async (url) => {
         const waitSec = (delayMs / 1000).toFixed(1);
         process.stdout.write(`\r  … 新刊.netに接続中... ${reason}、${waitSec}秒後にリトライ (${attempt}/${retries - 1}回目)`);
       },
+      readBody: (res) => readTextCapped(res, MAX_ICS_BYTES),
     });
-    text = await readTextCapped(res, MAX_ICS_BYTES);
   } catch (error) {
     // 接続/取得の失敗は、main 側でユーザーフレンドリーに表示するためタグ付けする。
     // （パース失敗とは区別する。パース失敗はそのまま致命的エラーとして扱う）
@@ -255,6 +267,13 @@ const fetchAndParseIcs = async (url) => {
 };
 
 const parseIcs = (icsText) => {
+  // VCALENDAR構造が無い応答（認証切れのHTMLページ、障害時の空応答、サイト側の
+  // 形式変更等）は「新刊0件」として無警告に正常終了させず、異常系として扱う。
+  if (!/BEGIN:VCALENDAR/.test(icsText)) {
+    const err = new Error('iCal形式として認識できない応答でした（BEGIN:VCALENDARが見つかりません）。');
+    err.kind = 'sinkan-format';
+    throw err;
+  }
   const unfolded = icsText.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '');
   const blocks = unfolded.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/g) ?? [];
   return blocks.map(parseVEvent).filter(Boolean);
@@ -336,4 +355,7 @@ const parseVEvent = (block) => {
 // =============================================================================
 main()
   .then(() => {})
-  .catch((error) => { console.error(error); });
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
