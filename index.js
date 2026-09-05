@@ -343,30 +343,8 @@ const parseIcs = (icsText) => {
 const unescapeIcsText = (value) =>
   value.replace(/\\(.)/g, (_, ch) => (ch === 'n' || ch === 'N' ? '\n' : ch));
 
-// DESCRIPTION は HTML なので、葉のテキスト（作者・出版社・URL）に含まれ得る
-// HTMLエンティティを復元する。名前付き（&amp; 等）と数値参照（&#39; / &#x27;）に対応。
-// 注意: タグ除去・<br>分割の「後」に呼ぶこと。先に呼ぶと &lt; → < がタグと誤認される。
-// プレーンオブジェクトだと継承プロパティ（constructor 等）を拾い、&constructor; のような
-// 非信頼入力で誤った置換が起きる。プロトタイプなしのマップにして自前のキーだけを引く。
-const HTML_NAMED_ENTITIES = Object.assign(Object.create(null), {
-  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
-});
-const decodeHtmlEntities = (value) =>
-  value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body) => {
-    if(body[0] === '#') {
-      const cp = body[1].toLowerCase() === 'x'
-        ? parseInt(body.slice(2), 16)
-        : parseInt(body.slice(1), 10);
-      // 有効な Unicode コードポイント(0〜0x10FFFF)のみ復号する。範囲外を
-      // String.fromCodePoint に渡すと RangeError で全体が落ちるため、元の文字列を残す。
-      return cp >= 0 && cp <= 0x10FFFF ? String.fromCodePoint(cp) : whole;
-    }
-    return HTML_NAMED_ENTITIES[body.toLowerCase()] ?? whole; // 未知の実体はそのまま残す
-  });
-
 // 端末制御文字（ESC/BEL 等の C0制御・DEL・C1制御）を除去する。非信頼な iCal 由来テキストを
 // ターミナルやカード名に出す前に通し、ANSIエスケープ等による出力偽装・端末操作を防ぐ。
-// decodeHtmlEntities は &#27; 等で制御文字を生成し得るので、デコード後の最終値に適用すること。
 const stripControlChars = (value) => value.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
 
 const parseVEvent = (block) => {
@@ -378,7 +356,13 @@ const parseVEvent = (block) => {
 
   const dtstart     = get('DTSTART'); // DATE 値なので TEXT エスケープ対象外
   const summary     = stripControlChars(unescapeIcsText(get('SUMMARY')));
-  const description = unescapeIcsText(get('DESCRIPTION')); // パース専用（直接表示しない）
+  // 2026年8月頃の新刊.netリニューアルで DESCRIPTION は
+  // "<a href>発売日<br>タイトル<br>[作者<br>]出版社<br></a>" というHTMLから
+  // "作者名(複数は/区切り) / 出版社名" のプレーンテキストに変わった。
+  // URLも同様にDESCRIPTION内のhref属性からではなく、独立したURLプロパティで
+  // 提供されるようになった。
+  const description = stripControlChars(unescapeIcsText(get('DESCRIPTION')));
+  const url          = get('URL'); // "URL;VALUE=URI:https://..." もコロン位置の取り出しは既存のget()で問題ない
 
   // DTSTART から発売日(YYYY-MM-DD)を取り出す。終日形式(20260302)が基本だが、
   // 日時形式(20260302T000000Z 等)でも先頭の YYYYMMDD を採用する（時刻部は無視）。
@@ -390,27 +374,31 @@ const parseVEvent = (block) => {
   const month = Number(mo), day = Number(d);
   if(month < 1 || month > 12 || day < 1 || day > 31) return null;
   const releaseDateStr = `${y}-${mo}-${d}`;
-  const sinkanUrl      = stripControlChars(decodeHtmlEntities(description.match(/href=["'](.*?)["']/)?.[1] ?? ''));
+  const sinkanUrl      = stripControlChars(url);
 
-  // DESCRIPTION は <a href="URL">発売日<br />タイトル<br />作者<br />出版社<br /></a> の形。
-  // ただし雑誌など作者がいないデータは「作者」の <br /> 行ごと省略され、
-  // <a ...>発売日<br />タイトル<br />出版社<br /></a> のように可変長になる。
-  // そこで <a>/</a> を除去 → <br>（表記ゆれ許容）で分割 → trim → 空要素除去し、
-  // 「出版社は常に末尾」「タイトルは常に2番目」という構造で取り出す。
-  // rest = タイトルより後ろ = [作者, 出版社] か [出版社] か []。
-  const fields = description
-    .replace(/<a\b[^>]*>/i, '')
-    .replace(/<\/a>/i, '')
-    .split(/<br\s*\/?>/i)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const rest          = fields.slice(2); // [発売日, タイトル] を除いた残り
-  const publisherName = stripControlChars(decodeHtmlEntities(rest.length >= 1 ? rest[rest.length - 1] : ''));
-  const authorName    = stripControlChars(decodeHtmlEntities(rest.length >= 2 ? rest[0] : ''));
-  // rest.length が3以上（複数作者が個別行になった等）は現行の「rest[0]=作者、
-  // rest[末尾]=出版社」という前提から外れ、中間要素を失う。実データでは未観測だが、
-  // 起きたら気づけるようフラグを立てる（呼び出し側で警告表示に使う）。
-  const formatAnomaly = rest.length > 2;
+  // DESCRIPTION は「作者名(複数は/区切り) / 出版社名」の形。区切りは「前後
+  // どちらかに空白を伴うスラッシュ」のうち最後のもの（例:
+  // "都築 真紀/川上 修一 / 講談社" では作者間の区切り"/"は前後に空白が無いため
+  // 無視され、末尾の" / "だけが区切りとして採用される）。
+  // 両側必須にせず片側だけで区切りと認めるのは、iCalの行折り返し（約75オクテット
+  // ごと）が区切りの直前・直後に来ると、unfold処理でその側の空白が失われ得る
+  // ため（実データでも「委員会 / 」の直後で折り返された例を確認済み）。
+  // 区切りが見つからない場合は作者情報なし・DESCRIPTION全体を出版社として扱う
+  // （雑誌等、実データで観測済み）。
+  const sepMatches = [...description.matchAll(/(?<=\s)\/|\/(?=\s)/g)];
+  let authorName = '';
+  let publisherName = '';
+  if(sepMatches.length > 0) {
+    const idx = sepMatches[sepMatches.length - 1].index;
+    authorName    = description.slice(0, idx).trim();
+    publisherName = description.slice(idx + 1).trim();
+  } else if(description) {
+    publisherName = description;
+  }
+
+  // DESCRIPTION にHTML構造（タグ・href=）が再出現した場合、上記のプレーン
+  // テキスト前提から外れている（サイト側の再度の形式変更等）とみなして警告する。
+  const formatAnomaly = /<|href=/i.test(description);
 
   return { releaseDateStr, bookTitle: summary, sinkanUrl, authorName, publisherName, formatAnomaly };
 };

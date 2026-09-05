@@ -29,7 +29,7 @@ review-log.md は作らず本ファイル単体で運用する（発見内容・
 
 | ファイル | 状態 | 相互作用チェック相手 |
 |---|---|---|
-| index.js | 済(2026-08-03、7件修正) | lib/trello.js（createTrelloClient）、lib/net.js（fetchWithRetry/readTextCapped/sleep）、lib/log.js、lib/config-loader.js、config.js（設定値・createTrelloCardName）。iCal非信頼入力のパース（parseVEvent）とTrello重複判定（isDuplicateCard）の整合に注意 |
+| index.js | 済(2026-08-03、7件修正)+変更(2026-09-05、新刊.netリニューアル対応) | lib/trello.js（createTrelloClient）、lib/net.js（fetchWithRetry/readTextCapped/sleep）、lib/log.js、lib/config-loader.js、config.js（設定値・createTrelloCardName）。iCal非信頼入力のパース（parseVEvent）とTrello重複判定（isDuplicateCard）の整合に注意 |
 | lib/net.js | 済(2026-08-03、3件修正) | index.js・lib/trello.js・setup.js から fetchWithRetry を利用される共通モジュール。リトライ・タイムアウト・サイズ上限の挙動が呼び出し側の前提と食い違っていないか |
 | lib/trello.js | 済(2026-08-03、2件修正) | lib/net.js（fetchWithRetry/fetchWithTimeout）に依存。index.js・info.js・setup.js から呼ばれる。GET/POSTでリトライ方針が異なる点（POSTは二重登録回避で非リトライ）が呼び出し側の期待と一致しているか |
 
@@ -84,3 +84,17 @@ Codexが指摘した「中」優先度4件（並行実行の二重登録・Trell
 4. **iCal日付の範囲外値を弾いていなかった**（index.js）: `parseVEvent` のDTSTARTパース後に月(1-12)・日(1-31)の粗い範囲チェックを追加し、範囲外は他の不正イベント同様nullを返して除外するようにした（`new Date()` の繰り上げ正規化に任せない）。単体テストで月13・月0のケースがnullになることを確認（日31超え自体は粗いチェックの対象外である点も確認済み）。
 
 全て構文チェック・単体テスト・実データへの読み取り専用スモークテスト（`info.js` 実機実行）で確認済み。
+
+## 精査記録（2026-09-05、新刊.netリニューアル対応）
+
+2026年8月頃の新刊.netリニューアルで、iCalのDESCRIPTION構造がHTML（`<a href>発売日<br>タイトル<br>[作者<br>]出版社<br></a>`）からプレーンテキスト（「作者名(複数は`/`区切り) / 出版社名」）へ変更され、商品URLもDESCRIPTION内の`href`属性からではなく独立した`URL`プロパティで提供されるようになったことをユーザー報告で把握。実際に新URL（`https://sinkan.net/users/130/calendar.ics?key=...`。旧URL `?action_ical=true&uid=...` は504で応答不能）から取得したiCal（33件のVEVENT、`C:\tmp\ClaudeCode\sinkan2trello\ical-raw-new.ics` に保存）で確認済み。
+
+**対応した変更（index.js）**
+
+1. `config.js` の `SINKAN_ICAL_URL` を新URLに更新（ユーザー実施依頼。`.gitignore` 管理下のためコミット対象外）。ホスト名は変わらず `sinkan.net` のため `isTrustedSinkanUrl` への影響なし。
+2. `parseVEvent` のDESCRIPTION解析を新形式向けに書き換え。区切りは「前後どちらかに空白を伴う`/`」のうち最後のものを採用（著者間の区切り`/`は前後に空白が無いため区別できる）。両側必須にしなかったのは、iCalの行折り返し（約75オクテットごと）が区切りの直前・直後に来ると`unfold`処理でその側の空白が失われ得るため（実データでも「委員会 / 」の直後で折り返された例を確認済み。Codex相当の外部レビュー[advisor]で指摘）。区切りが無ければ作者情報なし・DESCRIPTION全体を出版社として扱う（雑誌等で観測済み）。
+3. 商品URLの取得元をDESCRIPTION内`href`属性から独立`URL`プロパティ（`get('URL')`）に変更。`isTrustedSinkanUrl`によるホスト制限は維持。
+4. `formatAnomaly` の判定基準を「`rest.length > 2`」から「DESCRIPTIONにHTML構造（タグ・`href=`）が再出現」に変更。旧基準（空DESCRIPTION・複数区切り）は実データで健全なケースでも誤検知するため不採用（advisor指摘）。
+5. HTMLエンティティ復号（`decodeHtmlEntities`/`HTML_NAMED_ENTITIES`）はDESCRIPTIONがHTMLでなくなったため不要となり削除。
+
+**検証**: 保存済みiCal（33件）に対し、`index.js`のパーサ部分を複製した一時スクリプト（`C:\tmp\ClaudeCode\sinkan2trello\verify-parser.mjs`）で全件の`releaseDateStr`/`bookTitle`/`authorName`/`publisherName`/`sinkanUrl`/`formatAnomaly`を出力し目視確認（`node index.js`は実際にTrelloへPOSTしてしまうため使用せず）。作者複数（`/`区切り）・出版社名が作者部分に混入するケース（「つるまいかだ/講談社/メダリスト製作委員会 / 講談社」）・作者情報なし（出版社のみ）・DESCRIPTION完全空、いずれも意図通り分解できることを確認。全件`formatAnomaly=false`。
